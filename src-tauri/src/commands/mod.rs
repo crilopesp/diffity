@@ -1,7 +1,9 @@
 pub mod agents;
 pub mod comments;
+#[cfg(feature = "app")]
 pub mod dev;
 pub mod diff;
+#[cfg(feature = "app")]
 pub mod feedback;
 pub mod files;
 pub mod github;

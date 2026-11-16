@@ -60,7 +60,7 @@ const INDEX: { label: string; section: SettingsSection; keywords?: string }[] = 
   { label: 'Agent status', section: 'agents', keywords: 'claude codex opencode installed login re-detect' },
   { label: 'Agent binary path', section: 'agents', keywords: 'path claude-agent-acp codex-acp opencode cli' },
   { label: 'GitHub account', section: 'github', keywords: 'sign in sign out login' },
-  { label: 'Import from GitHub CLI', section: 'github', keywords: 'gh token' },
+  { label: 'Use the GitHub CLI', section: 'github', keywords: 'gh token' },
   { label: 'Personal access token', section: 'github', keywords: 'pat token keychain' },
   { label: 'Agents at once', section: 'tasks', keywords: 'parallel limit queue concurrent tasks worktrees' },
   { label: 'Task notifications', section: 'tasks', keywords: 'notify alert dock badge ready approval' },

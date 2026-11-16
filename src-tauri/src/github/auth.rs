@@ -1,8 +1,6 @@
-use std::process::Stdio;
 
 use crate::core::{AppError, Result};
 use serde::Deserialize;
-use tokio::process::Command;
 
 use crate::github::graphql::Http;
 use crate::github::types::DeviceCode;
@@ -51,27 +49,6 @@ pub async fn keychain_delete() -> Result<()> {
     })
     .await
     .map_err(|e| AppError::internal(e.to_string()))?
-}
-
-pub async fn gh_auth_token() -> Result<String> {
-    let out = Command::new("gh")
-        .args(["auth", "token"])
-        .stdin(Stdio::null())
-        .output()
-        .await
-        .map_err(|e| AppError::new("gh_missing", format!("could not run `gh`: {e}")))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(AppError::new(
-            "gh_not_logged_in",
-            format!("`gh auth token` failed: {}", stderr.trim()),
-        ));
-    }
-    let token = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if token.is_empty() {
-        return Err(AppError::new("gh_not_logged_in", "`gh auth token` returned nothing"));
-    }
-    Ok(token)
 }
 
 #[derive(Deserialize)]

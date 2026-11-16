@@ -23,7 +23,7 @@ struct FullThread {
 pub struct GithubService {
     store: Arc<Store>,
     http: Http,
-    token: Mutex<Option<String>>,
+    token: Mutex<Option<Credential>>,
     login: Mutex<Option<String>>,
 }
 
@@ -53,18 +53,17 @@ impl GithubService {
             .filter(|s| !s.trim().is_empty())
     }
 
-    async fn token(&self) -> Result<Option<String>> {
+    async fn token(&self) -> Result<Option<Credential>> {
         if let Some(token) = lock(&self.token)?.clone() {
             return Ok(Some(token));
         }
-        // A token imported from `gh` is re-read from `gh auth token` instead of being copied into the
-        // keychain: gh stays the source of truth (rotation, logout) and dev rebuilds don't hit keychain
-        // access prompts (their ad-hoc signature changes on every build).
+        // With the GitHub CLI, requests go through `gh api` and Diffity never sees gh's token: gh stays the
+        // source of truth (rotation, logout) and nothing is copied into the keychain.
         let token = if self.token_source().as_deref() == Some("gh") {
-            auth::gh_auth_token().await.ok()
+            Some(Credential::Gh)
         } else {
             match auth::keychain_read().await {
-                Ok(token) => token,
+                Ok(token) => token.map(Credential::Token),
                 Err(e) => {
                     tracing::warn!("github: keychain read failed: {}", e.message);
                     None
@@ -75,7 +74,7 @@ impl GithubService {
         Ok(token)
     }
 
-    async fn require_token(&self) -> Result<String> {
+    async fn require_token(&self) -> Result<Credential> {
         self.token()
             .await?
             .ok_or_else(|| AppError::new("unauthenticated", "Not signed in to GitHub"))
@@ -85,13 +84,16 @@ impl GithubService {
         db::get_setting(&self.store, TOKEN_SOURCE_KEY).ok().flatten()
     }
 
-    async fn store_token(&self, token: &str, source: &str) -> Result<GithubAuthStatus> {
-        let login = self.http.get_login(token).await?;
-        if source != "gh" {
-            auth::keychain_write(token.to_string()).await?;
-        }
+    async fn store_token(&self, token: &str) -> Result<GithubAuthStatus> {
+        let credential = Credential::Token(token.to_string());
+        let login = self.http.get_login(&credential).await?;
+        auth::keychain_write(token.to_string()).await?;
+        self.signed_in(credential, "keychain", login)
+    }
+
+    fn signed_in(&self, credential: Credential, source: &str, login: String) -> Result<GithubAuthStatus> {
         db::set_setting(&self.store, TOKEN_SOURCE_KEY, source)?;
-        *lock(&self.token)? = Some(token.to_string());
+        *lock(&self.token)? = Some(credential);
         *lock(&self.login)? = Some(login.clone());
         Ok(self.status_with(Some(login)))
     }
@@ -126,9 +128,10 @@ impl GithubService {
         }
     }
 
-    pub async fn import_gh_token(&self) -> Result<GithubAuthStatus> {
-        let token = auth::gh_auth_token().await?;
-        self.store_token(&token, "gh").await
+    /// Signs in as the GitHub CLI's account; requests then go through `gh`, which keeps its token to itself.
+    pub async fn use_gh(&self) -> Result<GithubAuthStatus> {
+        let login = self.http.get_login(&Credential::Gh).await?;
+        self.signed_in(Credential::Gh, "gh", login)
     }
 
     pub async fn set_token(&self, token: String) -> Result<GithubAuthStatus> {
@@ -136,7 +139,7 @@ impl GithubService {
         if token.is_empty() {
             return Err(AppError::invalid("token is empty"));
         }
-        self.store_token(&token, "keychain").await
+        self.store_token(&token).await
     }
 
     pub async fn device_start(&self) -> Result<DeviceCode> {
@@ -151,7 +154,7 @@ impl GithubService {
             .client_id()
             .ok_or_else(|| AppError::new("device_flow_unavailable", "DIFFITY_GITHUB_CLIENT_ID is not set"))?;
         let token = auth::device_poll(&self.http, &client_id, &device_code).await?;
-        self.store_token(&token, "keychain").await
+        self.store_token(&token).await
     }
 
     pub async fn logout(&self) -> Result<()> {
@@ -207,7 +210,7 @@ impl GithubService {
         Ok(self.pr_remote(repo_path).await?.slug)
     }
 
-    async fn fetch_pr(&self, token: &str, slug: &RepoSlug, number: u64) -> Result<PrNode> {
+    async fn fetch_pr(&self, token: &Credential, slug: &RepoSlug, number: u64) -> Result<PrNode> {
         let data: RepositoryData<PullRequestField<PrNode>> = self
             .http
             .query(
@@ -221,7 +224,7 @@ impl GithubService {
             .ok_or_else(|| AppError::not_found(format!("PR #{number} not found in {}", slug.full_name())))
     }
 
-    async fn fetch_pr_files(&self, token: &str, slug: &RepoSlug, number: u64) -> Result<HashSet<String>> {
+    async fn fetch_pr_files(&self, token: &Credential, slug: &RepoSlug, number: u64) -> Result<HashSet<String>> {
         let mut files = HashSet::new();
         let mut after: Option<String> = None;
         loop {
@@ -247,7 +250,7 @@ impl GithubService {
         }
     }
 
-    async fn fetch_threads(&self, token: &str, slug: &RepoSlug, number: u64) -> Result<Vec<FullThread>> {
+    async fn fetch_threads(&self, token: &Credential, slug: &RepoSlug, number: u64) -> Result<Vec<FullThread>> {
         let query = threads_query();
         let mut out = Vec::new();
         let mut after: Option<String> = None;
@@ -290,7 +293,7 @@ impl GithubService {
         }
     }
 
-    async fn fetch_more_comments(&self, token: &str, thread_id: &str, after: &str) -> Result<Connection<RemoteComment>> {
+    async fn fetch_more_comments(&self, token: &Credential, thread_id: &str, after: &str) -> Result<Connection<RemoteComment>> {
         let data: NodeData = self
             .http
             .query(token, &thread_comments_query(), json!({ "id": thread_id, "after": after }))
@@ -637,7 +640,7 @@ impl GithubService {
         })
     }
 
-    async fn fetch_pending_review(&self, token: &str, slug: &RepoSlug, number: u64) -> Result<Option<GithubPendingReview>> {
+    async fn fetch_pending_review(&self, token: &Credential, slug: &RepoSlug, number: u64) -> Result<Option<GithubPendingReview>> {
         let data: RepositoryData<PullRequestField<PendingReviewsField>> = self
             .http
             .query(
@@ -686,7 +689,7 @@ impl GithubService {
     /// Runs a GitHub mutation, or in dry-run mode records it in `result` and returns `None`.
     async fn mutate<T: serde::de::DeserializeOwned>(
         &self,
-        token: &str,
+        token: &Credential,
         name: &str,
         query: &str,
         variables: serde_json::Value,
@@ -717,7 +720,7 @@ impl GithubService {
         if let Some(message) = &ctx.head_mismatch {
             return Err(AppError::new("head_mismatch", message.clone()));
         }
-        let token = ctx.token.as_str();
+        let token = &ctx.token;
 
         let mut review_replies: Vec<(String, String, String)> = Vec::new();
         if let Some(rid) = &review_id {
@@ -917,7 +920,7 @@ impl GithubService {
         Ok(result)
     }
 
-    async fn post_reply(&self, token: &str, github_thread_id: &str, body: &str) -> Result<Option<i64>> {
+    async fn post_reply(&self, token: &Credential, github_thread_id: &str, body: &str) -> Result<Option<i64>> {
         let data: ReplyData = self
             .http
             .query(
@@ -1142,7 +1145,7 @@ impl GithubService {
 
 struct PrContext {
     slug: RepoSlug,
-    token: String,
+    token: Credential,
     pr: PrNode,
     head_mismatch: Option<String>,
     anchors: HashMap<String, review::SessionAnchor>,

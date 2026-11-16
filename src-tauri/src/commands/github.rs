@@ -19,8 +19,8 @@ pub async fn github_auth_status(state: State<'_, AppState>) -> Result<GithubAuth
 }
 
 #[tauri::command]
-pub async fn github_import_gh_token(state: State<'_, AppState>) -> Result<GithubAuthStatus, AppError> {
-    state.github.import_gh_token().await
+pub async fn github_use_gh(state: State<'_, AppState>) -> Result<GithubAuthStatus, AppError> {
+    state.github.use_gh().await
 }
 
 #[tauri::command]

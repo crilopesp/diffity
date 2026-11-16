@@ -95,7 +95,7 @@ export function AboutPane() {
       <PreferencesGroup label="Your data">
         <p className="pt-1.5 text-[12px] leading-relaxed text-text-secondary">
           Comments, reviews and settings live in a local database on this {isMac ? 'Mac' : 'computer'}. GitHub tokens
-          are kept in the {keychainName}, or read from the GitHub CLI.
+          are kept in the {keychainName}, or used through the GitHub CLI.
         </p>
       </PreferencesGroup>
     </PreferencesPane>

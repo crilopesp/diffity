@@ -1,11 +1,10 @@
-use diffity_desktop_lib::github::auth::gh_auth_token;
 use diffity_desktop_lib::github::graphql::*;
 use serde_json::json;
 
 #[tokio::test]
-#[ignore = "hits api.github.com with the local gh token (read-only)"]
+#[ignore = "hits api.github.com through the local gh (read-only)"]
 async fn live_read_only_queries() {
-    let token = gh_auth_token().await.unwrap();
+    let token = Credential::Gh;
     let http = Http::new();
     let login = http.get_login(&token).await.unwrap();
     assert!(!login.is_empty());

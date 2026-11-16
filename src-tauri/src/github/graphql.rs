@@ -10,6 +10,14 @@ const GRAPHQL_URL: &str = "https://api.github.com/graphql";
 pub const API_URL: &str = "https://api.github.com";
 const USER_AGENT: &str = "diffity-app";
 
+/// What a request to GitHub signs in with: a token the user gave Diffity, or the GitHub CLI itself. With `Gh` the
+/// request goes through `gh api`, so Diffity never sees gh's token.
+#[derive(Clone)]
+pub enum Credential {
+    Token(String),
+    Gh,
+}
+
 #[derive(Clone)]
 pub struct Http {
     client: reqwest::Client,
@@ -29,11 +37,15 @@ impl Http {
         &self.client
     }
 
-    pub async fn query<T: DeserializeOwned>(&self, token: &str, query: &str, variables: Value) -> Result<T> {
+    pub async fn query<T: DeserializeOwned>(&self, credential: &Credential, query: &str, variables: Value) -> Result<T> {
         if is_mutation(query) && dry_run() {
             tracing::warn!(target: "github_dry_run", "not sent: {query} {variables}");
             return Err(AppError::new("dry_run", "DIFFITY_GITHUB_DRY_RUN=1: GitHub mutation logged, not sent"));
         }
+        let token = match credential {
+            Credential::Token(token) => token,
+            Credential::Gh => return parse_response(&gh::graphql(query, variables).await?),
+        };
         let resp = self
             .client
             .post(GRAPHQL_URL)
@@ -56,7 +68,11 @@ impl Http {
         parse_response(&text)
     }
 
-    pub async fn get_login(&self, token: &str) -> Result<String> {
+    pub async fn get_login(&self, credential: &Credential) -> Result<String> {
+        let token = match credential {
+            Credential::Token(token) => token,
+            Credential::Gh => return gh::login().await,
+        };
         let resp = self
             .client
             .get(format!("{API_URL}/user"))
@@ -81,6 +97,65 @@ impl Http {
             .and_then(|v| v.as_str())
             .map(str::to_string)
             .ok_or_else(|| AppError::new("github", "missing login in /user response"))
+    }
+}
+
+/// GitHub through the GitHub CLI: `gh` signs the requests with its own login.
+mod gh {
+    use std::process::Stdio;
+    use std::time::Duration;
+
+    use serde_json::{json, Value};
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+
+    use crate::core::{AppError, Result};
+
+    const TIMEOUT: Duration = Duration::from_secs(30);
+
+    /// The response body of a GraphQL request; GraphQL errors come back in it, as over HTTP.
+    pub async fn graphql(query: &str, variables: Value) -> Result<String> {
+        let body = json!({ "query": query, "variables": variables }).to_string();
+        let out = run(&["api", "graphql", "--input", "-"], Some(body)).await?;
+        if !out.stdout.is_empty() {
+            return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+        }
+        Err(failure(&out.stderr))
+    }
+
+    pub async fn login() -> Result<String> {
+        let out = run(&["api", "user", "--jq", ".login"], None).await?;
+        let login = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !out.status.success() || login.is_empty() {
+            return Err(failure(&out.stderr));
+        }
+        Ok(login)
+    }
+
+    async fn run(args: &[&str], input: Option<String>) -> Result<std::process::Output> {
+        let mut child = Command::new("gh")
+            .args(args)
+            .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| AppError::new("gh_missing", format!("could not run `gh`: {e}")))?;
+        if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+            stdin.write_all(input.as_bytes()).await.map_err(|e| AppError::new("gh", e.to_string()))?;
+        }
+        tokio::time::timeout(TIMEOUT, child.wait_with_output())
+            .await
+            .map_err(|_| AppError::new("network", "`gh` did not answer in time"))?
+            .map_err(|e| AppError::new("gh", e.to_string()))
+    }
+
+    fn failure(stderr: &[u8]) -> AppError {
+        let message = String::from_utf8_lossy(stderr).trim().to_string();
+        if message.contains("gh auth login") || message.contains("HTTP 401") {
+            return AppError::new("unauthorized", "The GitHub CLI is not signed in: run `gh auth login`");
+        }
+        AppError::new("github", if message.is_empty() { "`gh api` failed".to_string() } else { message })
     }
 }
 
