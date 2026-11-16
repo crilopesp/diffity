@@ -1,0 +1,51 @@
+name: Fork server
+
+# diffity-server and the web build. Upstream's CI builds with `--all-features`, where the crate is the Tauri app
+# and has no server, so the fork checks the server build on its own.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: fork-server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server and web build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: fork-server
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      - run: pnpm build:web
+
+      # Also checks that every command the UI invokes runs on the server (tests/web_commands.rs).
+      - run: cargo test --no-default-features --features server
+        working-directory: src-tauri
+
+      - run: cargo clippy --no-default-features --features server --all-targets -- -D warnings
+        working-directory: src-tauri

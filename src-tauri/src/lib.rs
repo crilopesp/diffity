@@ -1,29 +1,53 @@
 // The library is the Tauri app; without the `app` feature it is empty so the `diffity-mcp`
 // sidecar (src/bin/diffity-mcp) builds without the app's dependencies.
-#![cfg(feature = "app")]
+// With only `core` (the `server` feature) it is the app without Tauri: the pieces marked `app` stay out.
+#![cfg(feature = "core")]
+
+// diffity-server compiles the app's commands unchanged: there, this crate is `tauri` (and the notification
+// plugin), and `server::tauri_shim` is the part of Tauri they use.
+#[cfg(all(feature = "server", not(feature = "app")))]
+extern crate self as tauri;
+#[cfg(all(feature = "server", not(feature = "app")))]
+extern crate self as tauri_plugin_notification;
+#[cfg(all(feature = "server", not(feature = "app")))]
+pub use server::tauri_shim::*;
 
 pub mod agents;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(all(any(feature = "app", feature = "server"), any(target_os = "macos", target_os = "linux")))]
 mod cli_install;
+#[cfg(any(feature = "app", feature = "server"))]
+// The server leaves out the commands about the desktop (`server::NOT_IN_WEB`).
+#[cfg_attr(not(feature = "app"), allow(dead_code))]
 mod commands;
 pub mod core;
-mod env_fix;
+pub mod env_fix;
 pub mod github;
+#[cfg(feature = "app")]
 mod open_link;
+#[cfg(all(feature = "server", not(feature = "app")))]
+pub mod server;
 mod state;
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "app", target_os = "macos"))]
 mod traffic_lights;
 
+#[cfg(feature = "app")]
 use std::sync::Arc;
 
+#[cfg(feature = "app")]
 use crate::agents::AgentManager;
+#[cfg(feature = "app")]
 use crate::core::store::Store;
+#[cfg(feature = "app")]
 use crate::github::GithubService;
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "app", target_os = "macos"))]
 use tauri::menu::{Menu, MenuItem, HELP_SUBMENU_ID};
+#[cfg(feature = "app")]
 use tauri::webview::PageLoadEvent;
+#[cfg(feature = "app")]
 use tauri::{AppHandle, Emitter, EventTarget, Manager, Runtime};
+#[cfg(feature = "app")]
 use tauri_plugin_deep_link::DeepLinkExt;
+#[cfg(feature = "app")]
 use tauri_plugin_window_state::StateFlags;
 
 pub use state::AppState;
@@ -36,7 +60,7 @@ pub fn dev_build() -> bool {
 
 /// `diffity-mcp` is bundled as a Tauri `externalBin`: Tauri places it next to the main executable
 /// (`target/<profile>/` in dev, `Diffity.app/Contents/MacOS/` when bundled).
-fn mcp_binary_path() -> std::path::PathBuf {
+pub fn mcp_binary_path() -> std::path::PathBuf {
     let name = if cfg!(windows) { "diffity-mcp.exe" } else { "diffity-mcp" };
     std::env::current_exe()
         .ok()
@@ -46,6 +70,7 @@ fn mcp_binary_path() -> std::path::PathBuf {
         .unwrap_or_else(|| name.into())
 }
 
+#[cfg(feature = "app")]
 fn init_state(app: &tauri::App) -> anyhow::Result<AppState> {
     let data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
@@ -69,6 +94,7 @@ fn init_state(app: &tauri::App) -> anyhow::Result<AppState> {
     Ok(AppState { store, agents, github, worktrees_root })
 }
 
+#[cfg(feature = "app")]
 /// Asks before quitting while agents are working, since quitting stops them. Returns true when it asked:
 /// the caller holds the quit and the dialog quits for real on confirm.
 fn confirm_stop_agents<R: Runtime>(app: &AppHandle<R>) -> bool {
@@ -93,16 +119,20 @@ fn confirm_stop_agents<R: Runtime>(app: &AppHandle<R>) -> bool {
     true
 }
 
+#[cfg(feature = "app")]
 const QUIT_MENU_ID: &str = "quit";
+#[cfg(feature = "app")]
 const REPORT_ISSUE_MENU_ID: &str = "report-issue";
+#[cfg(feature = "app")]
 const WHATS_NEW_MENU_ID: &str = "whats-new";
+#[cfg(feature = "app")]
 const CHECK_UPDATES_MENU_ID: &str = "check-for-updates";
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "app", target_os = "macos"))]
 const INSTALL_CLI_MENU_ID: &str = "install-cli";
 
 /// Tauri's default menu plus Diffity → Check for Updates… and Install 'diffity' Command, and Help → What's New
 /// and Report an Issue….
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "app", target_os = "macos"))]
 fn app_menu<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::default(handle)?;
     if let Some(app_submenu) = menu.items()?.first().and_then(|item| item.as_submenu().cloned()) {
@@ -140,6 +170,7 @@ fn app_menu<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     Ok(menu)
 }
 
+#[cfg(feature = "app")]
 /// Ctrl+Q on Linux, where there is no app menu to carry ⌘Q: asks first while agents are working, like the menu item.
 #[tauri::command]
 fn quit_app(app: AppHandle) {
@@ -148,6 +179,7 @@ fn quit_app(app: AppHandle) {
     }
 }
 
+#[cfg(feature = "app")]
 /// Sends a menu command to the focused window, or the main one when none has focus.
 fn emit_to_focused<R: Runtime>(app: &AppHandle<R>, event: &str) {
     let windows = app.webview_windows();
@@ -161,6 +193,7 @@ fn emit_to_focused<R: Runtime>(app: &AppHandle<R>, event: &str) {
     }
 }
 
+#[cfg(feature = "app")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = tracing_subscriber::fmt()

@@ -27,6 +27,11 @@ name = "diffity-cli"
 path = "src/bin/diffity-cli/main.rs"
 required-features = ["cli"]
 
+[[bin]]
+name = "diffity-server"
+path = "src/bin/diffity-server/main.rs"
+required-features = ["server"]
+
 [[test]]
 name = "bridge_round_trip"
 required-features = ["app", "mcp"]
@@ -36,6 +41,7 @@ default = ["app"]
 # The Tauri app. scripts/prepare-mcp.mjs builds the sidecar with `--no-default-features
 # --features mcp`, so it does not compile Tauri and the rest of the app.
 app = [
+  "core",
   "dep:tauri-build",
   "dep:tauri",
   "dep:tauri-plugin-dialog",
@@ -45,6 +51,15 @@ app = [
   "dep:tauri-plugin-updater",
   "dep:tauri-plugin-process",
   "dep:tauri-plugin-system-fonts",
+  "dep:objc2",
+  "dep:objc2-app-kit",
+  "dep:objc2-core-foundation",
+  "dep:objc2-foundation",
+  "dep:tauri-plugin-deep-link",
+  "dep:tauri-plugin-notification",
+]
+# What the app does, without Tauri: git, diffs, comments, agents and GitHub. Shared by the app and the server.
+core = [
   "dep:thiserror",
   "dep:uuid",
   "dep:chrono",
@@ -59,13 +74,10 @@ app = [
   "dep:agent-client-protocol",
   "dep:reqwest",
   "dep:keyring",
-  "dep:objc2",
-  "dep:objc2-app-kit",
-  "dep:objc2-core-foundation",
-  "dep:objc2-foundation",
-  "dep:tauri-plugin-deep-link",
-  "dep:tauri-plugin-notification",
 ]
+# `diffity-server` (src/bin/diffity-server): the app's commands over HTTP for the web build, without Tauri.
+# `keyring/vendored` builds libdbus from source, so the server needs no dbus headers to build.
+server = ["core", "dep:axum", "dep:tower-http", "dep:diffity-web-command", "keyring/vendored"]
 mcp = ["dep:rmcp"]
 # The `diffity` command-line tool (src/bin/diffity-cli); std only.
 cli = []
@@ -103,6 +115,9 @@ tauri-plugin-process = { version = "2.4.0", optional = true }
 tauri-plugin-system-fonts = { version = "2.0.2", optional = true }
 tauri-plugin-deep-link = { version = "2", optional = true }
 tauri-plugin-notification = { version = "2.5.0", optional = true }
+axum = { version = "0.8.9", features = ["ws"], optional = true }
+tower-http = { version = "0.7.1", features = ["fs", "compression-gzip"], optional = true }
+diffity-web-command = { path = "web-command", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6.4", optional = true }
