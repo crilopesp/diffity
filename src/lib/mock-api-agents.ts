@@ -534,7 +534,7 @@ export function createAgentMockHandlers(deps: AgentMockDeps): Record<string, (ar
     },
 
     github_auth_status: () => auth,
-    github_import_gh_token: async () => {
+    github_use_gh: async () => {
       await wait(500);
       auth = { ...auth, authenticated: true, login: 'demo-user', source: 'gh' };
       return auth;

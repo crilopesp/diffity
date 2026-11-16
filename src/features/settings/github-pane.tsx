@@ -36,15 +36,15 @@ function SignInRows(props: { onSignedIn: () => void }) {
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState<'gh' | 'token' | null>(null);
 
-  const importFromGh = async () => {
+  const connectGh = async () => {
     setBusy('gh');
     try {
-      const status = await tauri.githubImportGhToken();
+      const status = await tauri.githubUseGh();
       changed(status);
       onSignedIn();
       toast.success(`Signed in as ${status.login ?? 'GitHub user'}`);
     } catch (error) {
-      toast.error('Could not import the GitHub CLI token', { description: tauri.errorMessage(error) });
+      toast.error('Could not use the GitHub CLI', { description: tauri.errorMessage(error) });
     } finally {
       setBusy(null);
     }
@@ -72,9 +72,9 @@ function SignInRows(props: { onSignedIn: () => void }) {
   return (
     <>
       <PreferencesRow label="GitHub CLI" hint={<>Reuses the account from <code className="font-mono">gh auth login</code>.</>}>
-        <SettingsButton variant="primary" busy={busy === 'gh'} disabled={busy !== null} onClick={() => void importFromGh()}>
+        <SettingsButton variant="primary" busy={busy === 'gh'} disabled={busy !== null} onClick={() => void connectGh()}>
           {busy !== 'gh' && <GitHubIcon className="h-3 w-3" />}
-          Import from gh
+          Use gh
         </SettingsButton>
       </PreferencesRow>
       <PreferencesRow stacked label="Personal access token" hint={`Needs the repo scope. Stored in the ${keychainName}.`}>
@@ -148,7 +148,7 @@ function AccountCard(props: { status: GithubAuthStatus; onSwitch: () => void }) 
             </StatusBadge>
           </div>
           <div className="mt-0.5 text-[11px] text-text-muted">
-            {status.source === 'gh' ? 'Using the GitHub CLI login (gh auth token)' : `Token stored in the ${keychainName}`}
+            {status.source === 'gh' ? 'Using the GitHub CLI login (through gh)' : `Token stored in the ${keychainName}`}
           </div>
         </div>
         <SettingsButton onClick={onSwitch}>Switch</SettingsButton>

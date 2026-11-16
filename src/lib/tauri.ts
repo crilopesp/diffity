@@ -219,7 +219,7 @@ export const deleteChat = (chatId: string) => invoke<void>('delete_chat', { chat
 
 // github
 export const githubAuthStatus = () => invoke<GithubAuthStatus>('github_auth_status');
-export const githubImportGhToken = () => invoke<GithubAuthStatus>('github_import_gh_token');
+export const githubUseGh = () => invoke<GithubAuthStatus>('github_use_gh');
 export const githubSetToken = (token: string) => invoke<GithubAuthStatus>('github_set_token', { token });
 export const githubDeviceStart = () => invoke<DeviceCode>('github_device_start');
 export const githubDevicePoll = (deviceCode: string) =>

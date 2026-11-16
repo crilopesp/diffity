@@ -135,7 +135,7 @@ web_handler![
     commands::agents::respond_permission,
     commands::agents::delete_chat,
     commands::github::github_auth_status,
-    commands::github::github_import_gh_token,
+    commands::github::github_use_gh,
     commands::github::github_set_token,
     commands::github::github_device_start,
     commands::github::github_device_poll,
