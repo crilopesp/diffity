@@ -71,7 +71,11 @@ pub async fn serve(options: ServerOptions) -> anyhow::Result<()> {
 /// `POST /api/invoke/<command>` with the arguments Tauri's `invoke` would get; answers what the command returns,
 /// or its error, which the browser rejects with like Tauri does.
 async fn invoke(State(server): State<SharedServer>, UrlPath(command): UrlPath<String>, Json(args): Json<Value>) -> Response {
-    match dispatch(&server, &command, args).await {
+    // Its own task, so the command finishes even when the browser goes away (a closed tab must not stop an agent
+    // halfway, as quitting would not in the app).
+    let task = tokio::spawn(async move { dispatch(&server, &command, args).await });
+    let result = task.await.unwrap_or_else(|e| Err(json!(AppError::internal(format!("the command failed: {e}")))));
+    match result {
         Ok(value) => Json(value).into_response(),
         Err(error) => {
             let status = match error.get("code").and_then(Value::as_str) {
