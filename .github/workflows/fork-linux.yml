@@ -1,0 +1,106 @@
+name: Fork Linux release
+
+# Builds the .rpm and .deb of this fork. Upstream's release.yml needs Apple and updater secrets
+# that the fork does not have, so the fork releases with this workflow instead.
+#
+# Tag `fork-v<version>` (e.g. `fork-v0.7.4+1`) to publish a release; pull requests only build.
+
+on:
+  push:
+    tags: ['fork-v*']
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/fork-linux.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: fork-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux x86_64
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: fork-linux
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            file \
+            libssl-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            libdbus-1-dev
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the diffity-mcp and diffity-cli sidecars
+        run: node scripts/prepare-mcp.mjs --release
+
+      # A fork build must never update itself to an upstream release, so the updater looks at this
+      # repository's releases. They carry no updater artifacts yet (no signing key), so it finds nothing.
+      - name: Point the version and the updater at this fork
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          path = 'src-tauri/tauri.conf.json'
+          config = json.load(open(path))
+          ref = os.environ['REF_NAME']
+          if ref.startswith('fork-v'):
+              config['version'] = ref[len('fork-v'):]
+          config['plugins']['updater']['endpoints'] = [
+              f"https://github.com/{os.environ['REPOSITORY']}/releases/latest/download/latest.json"
+          ]
+          config['bundle']['createUpdaterArtifacts'] = False
+          json.dump(config, open(path, 'w'), indent=2)
+          print('Building Diffity', config['version'])
+          EOF
+
+      - name: Build the .rpm and .deb
+        run: pnpm tauri build --bundles rpm,deb --verbose
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diffity-linux
+          path: |
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/deb/*.deb
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/fork-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "${GITHUB_REF_NAME#fork-v}" \
+            --notes "Linux build of the fork. Install with: sudo dnf install ./Diffity-*.x86_64.rpm" \
+            src-tauri/target/release/bundle/rpm/*.rpm \
+            src-tauri/target/release/bundle/deb/*.deb
